@@ -1,0 +1,159 @@
+service: taller-products
+frameworkVersion: "4"
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  stage: ${opt:stage, 'develop'}
+  region: us-east-2
+
+  environment:
+    STAGE: ${self:provider.stage}
+    CORS_ORIGINS: ${file(./config/config-${self:provider.stage}.json):CORS_ORIGINS}
+    PRODUCTS_TABLE:
+      Ref: ProductsTable
+
+  apiGateway:
+    restApiId:
+      Fn::ImportValue: ${self:provider.stage}-MainRestApiId
+    restApiRootResourceId:
+      Fn::ImportValue: ${self:provider.stage}-MainRestApiRootResourceId
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - logs:CreateLogGroup
+        - logs:CreateLogStream
+        - logs:PutLogEvents
+      Resource: "*"
+
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:Query
+        - dynamodb:Scan
+      Resource:
+        - Fn::GetAtt:
+            - ProductsTable
+            - Arn
+        - Fn::Sub: "${ProductsTable.Arn}/index/*"
+
+custom:
+  cors:
+    origin: ${self:provider.environment.CORS_ORIGINS}
+    headers:
+      - Content-Type
+      - Authorization
+      - X-Api-Key
+      - X-Amz-Date
+      - X-Amz-Security-Token
+    allowCredentials: false
+
+functions:
+  createProduct:
+    handler: src/handlers/createProduct.createProduct
+    name: taller-${self:provider.stage}-Products-Create
+    events:
+      - http:
+          method: post
+          path: products/create
+          cors: ${self:custom.cors}
+          authorizer:
+            type: TOKEN
+            authorizerId:
+              Fn::ImportValue: ${self:provider.stage}-MainAuthorizerId
+
+  getProduct:
+    handler: src/handlers/getProduct.getProduct
+    name: taller-${self:provider.stage}-Products-Get
+    events:
+      - http:
+          method: get
+          path: products/{id}
+          cors: ${self:custom.cors}
+
+  updateProduct:
+    handler: src/handlers/updateProduct.updateProduct
+    name: taller-${self:provider.stage}-Products-Update
+    events:
+      - http:
+          method: put
+          path: products/{id}
+          cors: ${self:custom.cors}
+          authorizer:
+            type: TOKEN
+            authorizerId:
+              Fn::ImportValue: ${self:provider.stage}-MainAuthorizerId
+
+  deleteProduct:
+    handler: src/handlers/deleteProduct.deleteProduct
+    name: taller-${self:provider.stage}-Products-Delete
+    events:
+      - http:
+          method: delete
+          path: products/{id}
+          cors: ${self:custom.cors}
+          authorizer:
+            type: TOKEN
+            authorizerId:
+              Fn::ImportValue: ${self:provider.stage}-MainAuthorizerId
+
+  listAllProducts:
+    handler: src/handlers/listAllProducts.listAllProducts
+    name: taller-${self:provider.stage}-Products-ListAll
+    events:
+      - http:
+          method: get
+          path: products
+          cors: ${self:custom.cors}
+
+  listProductsBySeller:
+    handler: src/handlers/listProductsBySeller.listProductsBySeller
+    name: taller-${self:provider.stage}-Products-ListBySeller
+    events:
+      - http:
+          method: get
+          path: products/users/{sellerId}
+          cors: ${self:custom.cors}
+
+  updateStock:
+    handler: src/handlers/updateStock.updateStock
+    name: taller-${self:provider.stage}-Products-UpdateStock
+    events:
+      - http:
+          method: patch
+          path: products/{id}/stock
+          cors: ${self:custom.cors}
+          authorizer:
+            type: TOKEN
+            authorizerId:
+              Fn::ImportValue: ${self:provider.stage}-MainAuthorizerId
+
+resources:
+  Resources:
+    ProductsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: taller-${self:provider.stage}-products
+        BillingMode: PAY_PER_REQUEST
+
+        AttributeDefinitions:
+          - AttributeName: productId
+            AttributeType: S
+          - AttributeName: sellerId
+            AttributeType: S
+
+        KeySchema:
+          - AttributeName: productId
+            KeyType: HASH
+
+        GlobalSecondaryIndexes:
+          - IndexName: seller-index
+            KeySchema:
+              - AttributeName: sellerId
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
